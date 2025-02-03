@@ -1,10 +1,11 @@
 # %%
 import numpy as np
 from gurobipy import *
+
 import argparse
 import sys
 
-def main(rs_seed: int = 628):
+def main(rs_seed: int = 314):
     if (type(rs_seed) != int):
         raise TypeError("rs_seed must be an integer")
 
@@ -16,9 +17,28 @@ if __name__ == "__main__":
     if 'ipykernel' in sys.modules:
         sys.argv = ['']  # Reset arguments in Jupyter or IPython
     parser = argparse.ArgumentParser(description='Run the blood donation simulation')
-    parser.add_argument('--rs_seed', type=int, default=628, help='Random seed for simulation')
+    parser.add_argument('--rs_seed', type=int, default=314, help='Random seed for simulation')
     args = parser.parse_args()
     main(args.rs_seed)
+
+# Check if we're in a Jupyter/IPython environment
+if 'ipykernel' in sys.modules:
+    sys.argv = ['']  # Reset arguments to avoid conflicts with Jupyter's arguments
+
+# Argument parsing
+parser = argparse.ArgumentParser(description='Run the blood donation simulation')
+parser.add_argument('--rs_seed', type=int, default=314, help='Random seed for simulation')
+args = parser.parse_args()
+
+# Use the parsed rs_seed
+rs_seed = args.rs_seed
+
+# Ensure rs_seed is properly passed to the RandomState initialization
+rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(rs_seed)))
+savedState = rs.get_state()
+
+# Call your main function with rs_seed
+main(rs_seed)
 
 # %%
 ## Set variables that will be used throughout
@@ -100,14 +120,14 @@ def greedy_algorithm(P: dict, D: dict, patient_status: dict, donor_status: dict,
   ### Question 1.1(b).i: Code the greedy algorithm and append matches to the list 'matches'
   matches = []
 
-    for p in patients:
+  for p in patients:
         for d in donors:
             if not donor_status[d] and can_receive(P[p], D[d], compatible_blood_type): # checks compatibility
                 matches.append((p, d))
                 patient_status[p] = True #marking patient as matches
                 donor_status[d] = True #marking donor as matched
                 break #moving on to next patient after a match
-    
+
   return matches
 
 
@@ -137,71 +157,22 @@ def mip(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_b
   sys.stdout.flush()
 
   # Variables: x_{i,j} binary representing whether patient i to donor j
-    x = {}
-    for p in patients:
+  x = {}
+  for p in patients:
         for d in donors:
             if can_receive(P[p], D[d], compatible_blood_type):  # Check compatibility
                 x[p, d] = model.addVar(vtype=GRB.BINARY, name=f"x_{p}_{d}")
 
   # Constraint: Each patient can be matched to at most one (compatible) donor
-    for p in patients:
+  for p in patients:
         model.addConstr(quicksum(x[p, d] for d in donors if (p, d) in x) <= 1)
 
   # Constraint: Each donor can be matched to at most one (compatible) patient
-    for d in donors:
+  for d in donors:
         model.addConstr(quicksum(x[p, d] for p in patients if (p, d) in x) <= 1)
 
   # Objective: Maximize number of transplants
-    model.setObjective(quicksum(x[p, d] for p in patients for d in donors if (p, d) in x), GRB.MAXIMIZE)
-
-  # Optimize
-  model.params.outputflag = 0
-  model.optimize()
-  model.params.LogToConsole = 0
-
-  # Set matches based on solution to model
-    matches = []
-    if model.status == GRB.OPTIMAL:
-        for p in patients:
-            for d in donors:
-                if (p, d) in x and x[p, d].x > 0.5:  #if decision variable is 1, add match
-                    matches.append((p, d))
-
-    # Flush the output buffer
-    sys.stdout.flush()
-
-  return matches
-
-
-# %%
-## Second integer linear programming approach for transplants
-def mip2(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_blood_type: dict = compatible_blood_type):
-  """Match donors to patients based on optimization model
-
-  Parameters
-  ----------
-  P : dict
-    Dictionary containing patient name as key (Patient X) and blood type as value
-  D : dict
-    Dictionary containing donor name as key (Donor Y) and blood type as value
-  patient_status : dict
-    Dictionary for whether patient has been matched (true / false)
-  donor_status : dict
-    Dictionary for whether donor has been matched (true / false)
-  compatible_blood_type : dict
-    For every patient blood type, this gives a list of donor blood types compatible with that patient
-  """
-  patients = [key for key in P.keys() if patient_status[key]==False]
-  donors = [key for key in D.keys() if donor_status[key]==False]
-
-  ### Question 1.2: Write your model down below and append matches to the list 'matches'
-  model = Model('modified-kidney-matching')
-
-  # Variables: [fill in yourself]
-
-  # Constraint: [fill in yourself]
-
-  # Objective: [fill in yourself]
+  model.setObjective(quicksum(x[p, d] for p in patients for d in donors if (p, d) in x), GRB.MAXIMIZE)
 
   # Optimize
   model.params.outputflag = 0
@@ -210,8 +181,213 @@ def mip2(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_
 
   # Set matches based on solution to model
   matches = []
+  if model.status == GRB.OPTIMAL:
+        for p in patients:
+            for d in donors:
+                if (p, d) in x and x[p, d].x > 0.5:  #if decision variable is 1, add match
+                    matches.append((p, d))
+
+    # Flush the output buffer
+  sys.stdout.flush()
 
   return matches
+
+# %%
+def average_patients_matched_per_blood_type(num_matched_by_type: dict, num_periods: int):
+    """Calculate the average number of patients matched per blood type per period."""
+    avg_matches = {key: num_matched_by_type[key] / num_periods for key in num_matched_by_type.keys()}
+    return avg_matches
+
+# %%
+def average_time_in_system(TIS: dict, num_patients: int):
+    """Calculate the average time in system for all patients."""
+    avg_tis = sum(TIS.values()) / num_patients
+    return avg_tis
+
+# %%
+def average_proportion_matched(num_matched_by_type: dict, num_avail_patients_by_type: dict, num_periods: int):
+    """Calculate the average proportion of patients of each blood type matched per period."""
+    avg_prop_matched = {}
+    for key in num_matched_by_type.keys():
+        if num_avail_patients_by_type[key] > 0:
+            avg_prop_matched[key] = num_matched_by_type[key] / (num_avail_patients_by_type[key] * num_periods)
+        else:
+            avg_prop_matched[key] = 0  # No patients of this blood type available
+    return avg_prop_matched
+
+# %%
+def simulate(
+    patients: dict, 
+    donors: dict, 
+    p_rate: float, 
+    d_rate: float, 
+    init_num_patients: int, 
+    init_num_donors: int, 
+    num_periods: int,  # Make sure to pass this argument
+    stats: dict = usa_stats, 
+    compatible_blood_type: dict = compatible_blood_type,
+    match_function: callable = mip,
+    rs: np.random.RandomState = np.random.RandomState(314),
+    DEBUG: bool = False):
+    """Simulate patient/donor pool over time"""
+    
+    # Set up initial patients and donors
+    patients = {'Patient '+str(key+1): generate_new(stats, rs) for key in range(init_num_patients)}
+    donors   = {'Donor '+str(key+1): generate_new(stats, rs) for key in range(init_num_donors)}
+
+    # *_status[i] keeps whether patient/donor i has been matched
+    patient_status = {'Patient '+str(key+1): False for key in range(init_num_patients)}
+    donor_status   = {'Donor '+str(key+1): False for key in range(init_num_donors)}
+
+    num_patients = init_num_patients
+    num_donors = init_num_donors
+
+    num_patients_by_type = {key: sum(patients[i] == key for i in patients) for key in compatible_blood_type.keys()}
+    num_donors_by_type = {key: sum(donors[i] == key for i in donors) for key in compatible_blood_type.keys()}
+
+    num_matched_by_type = {key: 0 for key in compatible_blood_type.keys()}
+    TIS = {key: 0 for key in patients.keys()}  # Time in system for each patient
+
+    num_avail_patients_by_type = {key: sum(patients[i] == key for i in patients) for key in compatible_blood_type.keys()}
+    avg_prop_matched = {key: 0 for key in compatible_blood_type.keys()}
+
+    # Simulation loop for num_periods
+    for it in range(num_periods):
+        new_patients = rs.poisson(p_rate)
+        new_donors = rs.poisson(d_rate)
+
+        for i in range(new_patients):
+            curr_name = 'Patient '+str(num_patients+i+1)
+            patients[curr_name] = generate_new(stats, rs)
+            patient_status[curr_name] = False
+            num_patients_by_type[patients[curr_name]] += 1
+            num_avail_patients_by_type[patients[curr_name]] += 1
+            TIS['Patient '+str(num_patients+i+1)] = 0
+
+        for i in range(new_donors):
+            curr_name = 'Donor '+str(num_donors+i+1)
+            donors[curr_name] = generate_new(stats, rs)
+            donor_status[curr_name] = False
+
+        # Match patients and donors
+        matches = match_function(patients, donors, patient_status, donor_status, compatible_blood_type)
+
+        curr_num_matched = {key: 0 for key in compatible_blood_type.keys()}
+        for m in matches:
+            patient_status[m[0]] = True
+            donor_status[m[1]] = True
+            num_matched_by_type[patients[m[0]]] += 1
+            curr_num_matched[patients[m[0]]] += 1
+
+        # Update the available patients by blood type
+        for key in compatible_blood_type.keys():
+            num_avail_patients_by_type[key] -= curr_num_matched[key]
+
+        # For patients still in system, increment time spent waiting
+        for i in patients.keys():
+            if patient_status[i] == False:
+                TIS[i] += 1
+
+    # Now calculate and print the statistics
+
+    # (iii) Average number of patients (per blood type) matched per period
+    avg_matches = average_patients_matched_per_blood_type(num_matched_by_type, num_periods)
+
+    # (iv) Average time in system
+    avg_tis = average_time_in_system(TIS, num_patients)
+
+    # Average time in system (by type, weighed by num_patients)
+    TIS_BT = {key: 0 for key in compatible_blood_type.keys()}
+    for i in patients.keys():
+        TIS_BT[patients[i]] += TIS[i] / num_patients_by_type[patients[i]]
+
+    # (v) Average proportion of patients matched per period by blood type
+    avg_prop_matched = average_proportion_matched(num_matched_by_type, num_avail_patients_by_type, num_periods)
+
+    # Print the summary statistics
+    print("=== Summary Statistics ===")
+    print(f'Number of periods: {num_periods}')
+    print(f'Total # patients matched: {sum(num_matched_by_type.values())}/{num_patients}')
+    print(f'1.1(b)iii: Average number of patients (per blood type) matched per period: {avg_matches}')
+    print(f'1.1(b)iv: Average time in system: {avg_tis}')
+    print(f'Average time in system (by type, weighed by num_patients): {TIS_BT}')
+    print(f'1.1(b)iv: Average time in system (by type, weighed by num_patients_by_type): {TIS_BT}')
+    print(f'1.1(b)v: Average proportion of patients matched per period by type: {avg_prop_matched}')
+
+    return num_matched_by_type, num_patients
+
+
+# %%
+## Second integer linear programming approach for transplants
+def mip2(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_blood_type: dict = compatible_blood_type):
+    """Modified Integer Linear Program to balance matching across blood types"""
+    patients = [key for key in P.keys() if patient_status[key] == False]
+    donors = [key for key in D.keys() if donor_status[key] == False]
+
+    model = Model('modified-kidney-matching')
+
+    # Variables: x_{i,j} binary representing whether patient i is matched to donor j
+    x = {}
+    for p in patients:
+        for d in donors:
+            if can_receive(P[p], D[d], compatible_blood_type):  # Check compatibility
+                x[p, d] = model.addVar(vtype=GRB.BINARY, name=f"x_{p}_{d}")
+
+    # Constraint: Each patient can be matched to at most one donor
+    for p in patients:ok
+        model.addConstr(quicksum(x[p, d] for d in donors if (p, d) in x) <= 1)
+
+    # Constraint: Each donor can be matched to at most one patient
+    for d in donors:
+        model.addConstr(quicksum(x[p, d] for p in patients if (p, d) in x) <= 1)
+
+    # Objective: Maximize number of transplants, with balancing penalties for each blood type
+    blood_type_weights = {
+        'A': 1.0,
+        'B': 1.0,
+        'AB': 1.0,
+        'O': 1.0
+    }
+
+    # Calculate the total number of matches for each blood type
+    match_count_by_type = {}
+    for bt in compatible_blood_type.keys():
+        match_count_by_type[bt] = quicksum(x[p, d] for p in patients for d in donors if P[p] == bt and (p, d) in x)
+
+    # Introduce a balancing penalty term for disparities
+    blood_type_penalty = quicksum(
+        (match_count_by_type[bt] - (num_patients_by_type[bt] / 2)) ** 2  # Squared difference from ideal balance
+        for bt in compatible_blood_type.keys()
+    )
+
+    # Maximizing the number of transplants while minimizing disparity (penalizing unbalanced matching)
+    model.setObjective(
+        quicksum(
+            x[p, d] * blood_type_weights[P[p]] 
+            for p in patients 
+            for d in donors 
+            if (p, d) in x
+        ) - blood_type_penalty,  # Apply penalty for disparity
+        GRB.MAXIMIZE
+    )
+
+    # Optimize
+    model.params.outputflag = 0
+    model.optimize()
+    model.params.LogToConsole = 0
+
+    # Set matches based on solution to model
+    matches = []
+    if model.status == GRB.OPTIMAL:
+        for p in patients:
+            for d in donors:
+                if (p, d) in x and x[p, d].x > 0.5:  # If decision variable is 1, add match
+                    matches.append((p, d))
+
+    sys.stdout.flush()
+
+    return matches
+
 
 
 # %%
@@ -376,14 +552,45 @@ def simulate(
 
   return num_matched_by_type, num_patients
 
-def main(rs_seed:int = 628):
+import networkx as nx
+import matplotlib.pyplot as plt
+
+# Define the compatibility relationships (bipartite graph edges)
+patient_donor_compatibility = {
+    'Patient 1': ['Donor 1', 'Donor 2'],
+    'Patient 2': ['Donor 2', 'Donor 3'],
+    'Patient 3': ['Donor 1', 'Donor 3']
+}
+
+# Create the bipartite graph
+B = nx.Graph()
+
+# Add nodes
+patients = ['Patient 1', 'Patient 2', 'Patient 3']
+donors = ['Donor 1', 'Donor 2', 'Donor 3']
+B.add_nodes_from(patients, bipartite=0)
+B.add_nodes_from(donors, bipartite=1)
+
+# Add edges (compatible pairs)
+for patient in patients:
+    for donor in patient_donor_compatibility[patient]:
+        B.add_edge(patient, donor)
+
+# Draw the bipartite graph
+pos = nx.spring_layout(B)
+plt.figure(figsize=(8, 6))
+nx.draw(B, pos, with_labels=True, node_size=2000, node_color='skyblue', font_size=10, font_weight='bold', edge_color='gray')
+plt.title("Bipartite Graph of Patients and Donors")
+plt.show()
+
+def main(rs_seed:int = 314):
   if (type(rs_seed) != int):
     raise TypeError("rs_seed must be an integer")
 
   # Define which blood types are compatible with a patient
   # For example, compatible_blood_type['A'] is 'A' and 'O'
   # indicating that donors of type 'A' or type 'O' blood can donate to 'A' patients
-  compatible_blood_type = {
+compatible_blood_type = {
       'A':  ['A', 'O'],
       'B':  ['B', 'O'],
       'AB': ['A', 'B', 'AB', 'O'],
@@ -391,62 +598,62 @@ def main(rs_seed:int = 628):
   }
 
   # The stats dict will hold the probability of being every blood type
-  usa_stats = {
+usa_stats = {
       'A':  .42,
       'B':  .10,
       'AB': .04,
       'O':  .44
   }
   # Verify that probabilities sum to 1
-  assert(abs(1.-sum(usa_stats.values()) < 1e-7))
+assert(abs(1.-sum(usa_stats.values()) < 1e-7))
 
   # Initialize the simulation with some number of patients and donors
-  init_num_patients = 20
-  init_num_donors = 20
+init_num_patients = 20
+init_num_donors = 20
 
   # How long to run the simulation for
-  num_periods = 52
+num_periods = 52
 
   # Set the number of patients and donors arriving in each time period
   # The arrivals will be Poisson distributed with the below rate
-  p_rate = 10
-  d_rate = 10
+p_rate = 10
+d_rate = 10
 
   # Save random state
-  from numpy.random import MT19937
-  from numpy.random import RandomState, SeedSequence
-  rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(rs_seed)))
-  savedState = rs.get_state()
+from numpy.random import MT19937
+from numpy.random import RandomState, SeedSequence
+rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(rs_seed)))
+savedState = rs.get_state()
 
   # Test greedy algorithm
-  print("====== Greedy ======")
-  rs.set_state(savedState)
-  patients = {}
-  donors = {}
-  num_matched_greedy, num_patients_greedy = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, greedy_algorithm, rs);
-  print("Number of matches from greedy algorithm: {:d}/{:d}".format(sum(num_matched_greedy.values()), num_patients_greedy))
+print("====== Greedy ======")
+rs.set_state(savedState)
+patients = {}
+donors = {}
+num_matched_greedy, num_patients_greedy = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, greedy_algorithm, rs);
+print("Number of matches from greedy algorithm: {:d}/{:d}".format(sum(num_matched_greedy.values()), num_patients_greedy))
 
   # Test integer linear programming approach
-  print("\n====== MIP ======")
-  rs.set_state(savedState)
-  patients = {}
-  donors = {}
-  num_matched_mip, num_patients_mip = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, mip, rs);
-  print("Number of matches from MIP: {:d}/{:d}".format(sum(num_matched_mip.values()), num_patients_mip))
+print("\n====== MIP ======")
+rs.set_state(savedState)
+patients = {}
+donors = {}
+num_matched_mip, num_patients_mip = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, mip, rs);
+print("Number of matches from MIP: {:d}/{:d}".format(sum(num_matched_mip.values()), num_patients_mip))
 
   # Test integer linear programming approach with a different objective function
-  print("\n====== MIP2 ======")
-  rs.set_state(savedState)
-  patients = {}
-  donors = {}
-  num_matched_mip2, num_patients_mip2 = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, mip2, rs);
-  print("Number of matches from MIP2: {:d}/{:d}".format(sum(num_matched_mip2.values()), num_patients_mip2))
+print("\n====== MIP2 ======")
+rs.set_state(savedState)
+patients = {}
+donors = {}
+num_matched_mip2, num_patients_mip2 = simulate(patients, donors, p_rate, d_rate, init_num_patients, init_num_donors, num_periods, usa_stats, compatible_blood_type, mip2, rs);
+print("Number of matches from MIP2: {:d}/{:d}".format(sum(num_matched_mip2.values()), num_patients_mip2))
 
 # Add main function
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run the blood donation simulation')
-  parser.add_argument('--rs_seed', type=int, default=628, help='Random seed for simulation')
+  parser.add_argument('--rs_seed', type=int, default=314, help='Random seed for simulation')
   args = parser.parse_args()
   main(args.rs_seed)
-
+# %%
