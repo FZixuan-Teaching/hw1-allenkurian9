@@ -82,6 +82,14 @@ def greedy_algorithm(P: dict, D: dict, patient_status: dict, donor_status: dict,
   ### Question 1.1(b).i: Code the greedy algorithm and append matches to the list 'matches'
   matches = []
 
+    for p in patients:
+        for d in donors:
+            if not donor_status[d] and can_receive(P[p], D[d], compatible_blood_type): # checks compatibility
+                matches.append((p, d))
+                patient_status[p] = True #marking patient as matches
+                donor_status[d] = True #marking donor as matched
+                break #moving on to next patient after a match
+    
   return matches
 
 
@@ -111,12 +119,22 @@ def mip(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_b
   sys.stdout.flush()
 
   # Variables: x_{i,j} binary representing whether patient i to donor j
+    x = {}
+    for p in patients:
+        for d in donors:
+            if can_receive(P[p], D[d], compatible_blood_type):  # Check compatibility
+                x[p, d] = model.addVar(vtype=GRB.BINARY, name=f"x_{p}_{d}")
 
   # Constraint: Each patient can be matched to at most one (compatible) donor
+    for p in patients:
+        model.addConstr(quicksum(x[p, d] for d in donors if (p, d) in x) <= 1)
 
   # Constraint: Each donor can be matched to at most one (compatible) patient
+    for d in donors:
+        model.addConstr(quicksum(x[p, d] for p in patients if (p, d) in x) <= 1)
 
   # Objective: Maximize number of transplants
+    model.setObjective(quicksum(x[p, d] for p in patients for d in donors if (p, d) in x), GRB.MAXIMIZE)
 
   # Optimize
   model.params.outputflag = 0
@@ -124,7 +142,15 @@ def mip(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_b
   model.params.LogToConsole = 0
 
   # Set matches based on solution to model
-  matches = []
+    matches = []
+    if model.status == GRB.OPTIMAL:
+        for p in patients:
+            for d in donors:
+                if (p, d) in x and x[p, d].x > 0.5:  #if decision variable is 1, add match
+                    matches.append((p, d))
+
+    # Flush the output buffer
+    sys.stdout.flush()
 
   return matches
 
