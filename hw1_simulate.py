@@ -334,7 +334,7 @@ def mip2(P: dict, D: dict, patient_status: dict, donor_status: dict, compatible_
                 x[p, d] = model.addVar(vtype=GRB.BINARY, name=f"x_{p}_{d}")
 
     # Constraint: Each patient can be matched to at most one donor
-    for p in patients:ok
+    for p in patients:
         model.addConstr(quicksum(x[p, d] for d in donors if (p, d) in x) <= 1)
 
     # Constraint: Each donor can be matched to at most one patient
